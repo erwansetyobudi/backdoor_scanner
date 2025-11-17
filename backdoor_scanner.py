@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Tools Deteksi Backdoor Terselubung - FIXED VERSION
+Tools Deteksi Backdoor Terselubung - WITH CSV EXPORT
 """
 
 import os
@@ -8,6 +8,7 @@ import hashlib
 import argparse
 from pathlib import Path
 import json
+import csv
 from datetime import datetime
 
 class BackdoorScanner:
@@ -40,9 +41,8 @@ class BackdoorScanner:
         """Deteksi tipe file menggunakan signature/header"""
         try:
             with open(file_path, 'rb') as f:
-                header = f.read(20)  # Baca 20 byte pertama
+                header = f.read(20)
             
-            # Cek magic numbers untuk berbagai format
             if header.startswith(b'\xff\xd8\xff'):
                 return 'image/jpeg'
             elif header.startswith(b'\x89PNG\r\n\x1a\n'):
@@ -53,12 +53,11 @@ class BackdoorScanner:
                 return 'application/pdf'
             elif header.startswith(b'<?php'):
                 return 'application/x-php'
-            elif header.startswith(b'PK'):  # ZIP files
+            elif header.startswith(b'PK'):
                 return 'application/zip'
-            elif header.startswith(b'MZ'):  # Windows EXE
+            elif header.startswith(b'MZ'):
                 return 'application/x-dosexec'
             else:
-                # Cek jika mengandung teks PHP/script
                 if b'<?php' in header or b'<?=' in header:
                     return 'application/x-php'
                 elif b'<script' in header.lower():
@@ -72,15 +71,12 @@ class BackdoorScanner:
         """Cek apakah ekstensi file sesuai dengan tipe sebenarnya"""
         ext = Path(file_path).suffix.lower()
         
-        # Jika file sebenarnya PHP tapi ekstensi bukan PHP
         if 'php' in actual_type and ext not in self.suspicious_extensions['executable']:
             return True
             
-        # Jika file sebenarnya executable tapi ekstensi gambar
         if ('dosexec' in actual_type or 'executable' in actual_type) and ext in self.suspicious_extensions['image']:
             return True
             
-        # Jika file sebenarnya text/script tapi ekstensi gambar
         if ('text' in actual_type or 'script' in actual_type) and ext in self.suspicious_extensions['image']:
             return True
             
@@ -90,7 +86,7 @@ class BackdoorScanner:
         """Scan konten file untuk pattern mencurigakan"""
         try:
             with open(file_path, 'rb') as f:
-                content = f.read(8192)  # Baca 8KB pertama
+                content = f.read(8192)
                 
             suspicious_found = []
             for pattern in self.suspicious_patterns:
@@ -116,8 +112,7 @@ class BackdoorScanner:
         """Scan seluruh directory"""
         print(f"[+] Starting scan in: {directory_path}")
         
-        # Scan semua subdirectory, tidak hanya files/images/repository
-        target_dirs = ['files', 'images', 'repository', '']  # '' untuk root directory
+        target_dirs = ['files', 'images', 'repository', '']
         
         for target_dir in target_dirs:
             full_path = os.path.join(directory_path, target_dir)
@@ -151,22 +146,16 @@ class BackdoorScanner:
             file_ext = Path(file_path).suffix.lower()
             file_hash = self.calculate_file_hash(file_path)
             
-            # Skip file yang terlalu kecil
             if file_size < 10:
                 return
             
-            # Cek mismatch extension
             is_mismatched = self.check_file_extension_mismatch(file_path, actual_type)
-            
-            # Scan konten untuk pattern mencurigakan
             suspicious_patterns = self.scan_file_content(file_path)
             
-            # Cek jika file image mengandung kode executable
             is_executable_image = False
             if file_ext in self.suspicious_extensions['image'] and ('php' in actual_type or 'executable' in actual_type):
                 is_executable_image = True
             
-            # Tentukan level threat
             threat_detected = suspicious_patterns or is_mismatched or is_executable_image
             
             if threat_detected:
@@ -207,7 +196,6 @@ class BackdoorScanner:
         print(f"\nTotal files scanned: {self.scan_results['total_files_scanned']}")
         print(f"Scan time: {self.scan_results['scan_time']}")
         
-        # Tampilkan file suspicious
         all_suspicious = (self.scan_results['suspicious_files'] + 
                          self.scan_results['mismatched_files'] + 
                          self.scan_results['executable_images'])
@@ -229,34 +217,77 @@ class BackdoorScanner:
         else:
             print("\n✅ No suspicious files found!")
 
-    def save_report(self, output_file="scan_report.json"):
+    def save_report_json(self, output_file="scan_report.json"):
         """Simpan hasil scan ke file JSON"""
         try:
             with open(output_file, 'w', encoding='utf-8') as f:
                 json.dump(self.scan_results, f, indent=2, ensure_ascii=False)
-            print(f"\n📄 Full report saved to: {output_file}")
+            print(f"\n📄 JSON report saved to: {output_file}")
         except Exception as e:
-            print(f"Error saving report: {str(e)}")
+            print(f"Error saving JSON report: {str(e)}")
+
+    def save_report_csv(self, output_file="scan_report.csv"):
+        """Simpan hasil scan ke file CSV"""
+        try:
+            all_suspicious = (self.scan_results['suspicious_files'] + 
+                             self.scan_results['mismatched_files'] + 
+                             self.scan_results['executable_images'])
+            
+            if not all_suspicious:
+                print("No suspicious files to export to CSV")
+                return
+            
+            with open(output_file, 'w', newline='', encoding='utf-8') as f:
+                fieldnames = ['file_path', 'file_size', 'file_extension', 'actual_type', 
+                             'threat_level', 'issues', 'suspicious_patterns', 'hash']
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                
+                writer.writeheader()
+                for file in all_suspicious:
+                    # Format lists to strings for CSV
+                    csv_row = file.copy()
+                    csv_row['issues'] = ','.join(file['issues'])
+                    if 'suspicious_patterns' in file:
+                        csv_row['suspicious_patterns'] = ','.join(file['suspicious_patterns'])
+                    else:
+                        csv_row['suspicious_patterns'] = ''
+                    
+                    writer.writerow(csv_row)
+            
+            print(f"📊 CSV report saved to: {output_file}")
+            print(f"📋 Total records exported: {len(all_suspicious)}")
+            
+        except Exception as e:
+            print(f"Error saving CSV report: {str(e)}")
 
 def main():
-    print("🚀 Starting Backdoor Scanner...")
-    print("Scanning for suspicious files...")
+    parser = argparse.ArgumentParser(description='Backdoor File Scanner')
+    parser.add_argument('directory', nargs='?', help='Directory to scan', default=os.getcwd())
+    parser.add_argument('-o', '--output', help='Output JSON report file', default='scan_report.json')
+    parser.add_argument('--csv', help='Output CSV report file')
     
-    # Jika tidak ada argumen, scan directory current
-    import sys
-    if len(sys.argv) > 1:
-        directory = sys.argv[1]
-    else:
-        directory = os.getcwd()
+    args = parser.parse_args()
     
-    if not os.path.exists(directory):
-        print(f"Error: Directory {directory} tidak ditemukan!")
+    if not os.path.exists(args.directory):
+        print(f"Error: Directory {args.directory} tidak ditemukan!")
         return
     
+    print("🚀 Starting Backdoor Scanner...")
+    print("Scanning directories: files/, images/, repository/")
+    
     scanner = BackdoorScanner()
-    scanner.scan_directory(directory)
+    scanner.scan_directory(args.directory)
     scanner.generate_report()
-    scanner.save_report()
+    
+    # Save reports
+    scanner.save_report_json(args.output)
+    
+    if args.csv:
+        scanner.save_report_csv(args.csv)
+    else:
+        # Auto-generate CSV name from JSON name if not specified
+        csv_name = args.output.replace('.json', '.csv')
+        scanner.save_report_csv(csv_name)
 
 if __name__ == "__main__":
     main()
